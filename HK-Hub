@@ -114,7 +114,120 @@ local Toggle = Tab:CreateToggle({
    CurrentValue = false,
    Flag = "ToggleBESP", -- A flag is the identifier for the configuration file, make sure every element has a different flag if you're using configuration saving to ensure no overlaps
    Callback = function(Value)
---// Universal Box ESP (Works on Arsenal and other games) -- settings local settings = { defaultcolor = Color3.fromRGB(255,0,0), teamcheck = false, teamcolor = true }; -- services local runService = game:GetService("RunService"); local players = game:GetService("Players"); -- variables local localPlayer = players.LocalPlayer; local camera = workspace.CurrentCamera; -- functions local newVector2, newColor3, newDrawing = Vector2.new, Color3.new, Drawing.new; local tan, rad = math.tan, math.rad; local round = function(...) local a = {}; for i,v in next, table.pack(...) do a[i] = math.round(v); end return unpack(a); end; local wtvp = function(...) local a, b = camera.WorldToViewportPoint(camera, ...) return newVector2(a.X, a.Y), b, a.Z end; local espCache = {}; local function createEsp(player) local drawings = {}; drawings.box = newDrawing("Square"); drawings.box.Thickness = 1; drawings.box.Filled = false; drawings.box.Color = settings.defaultcolor; drawings.box.Visible = false; drawings.box.ZIndex = 2; drawings.boxoutline = newDrawing("Square"); drawings.boxoutline.Thickness = 3; drawings.boxoutline.Filled = false; drawings.boxoutline.Color = newColor3(); drawings.boxoutline.Visible = false; drawings.boxoutline.ZIndex = 1; espCache[player] = drawings; end local function removeEsp(player) if rawget(espCache, player) then for _, drawing in next, espCache[player] do drawing:Remove(); end espCache[player] = nil; end end local function updateEsp(player, esp) local character = player and player.Character; if character then local cframe = character:GetModelCFrame(); local position, visible, depth = wtvp(cframe.Position); esp.box.Visible = visible; esp.boxoutline.Visible = visible; if cframe and visible then local scaleFactor = 1 / (depth * tan(rad(camera.FieldOfView / 2)) * 2) * 1000; local width, height = round(4 * scaleFactor, 5 * scaleFactor); local x, y = round(position.X, position.Y); esp.box.Size = newVector2(width, height); esp.box.Position = newVector2(round(x - width / 2, y - height / 2)); esp.box.Color = settings.teamcolor and player.TeamColor.Color or settings.defaultcolor; esp.boxoutline.Size = esp.box.Size; esp.boxoutline.Position = esp.box.Position; end else esp.box.Visible = false; esp.boxoutline.Visible = false; end end -- main for _, player in next, players:GetPlayers() do if player ~= localPlayer then createEsp(player); end end players.PlayerAdded:Connect(function(player) createEsp(player); end); players.PlayerRemoving:Connect(function(player) removeEsp(player); end) runService:BindToRenderStep("esp", Enum.RenderPriority.Camera.Value, function() for player, drawings in next, espCache do if settings.teamcheck and player.Team == localPlayer.Team then continue; end if drawings and player ~= localPlayer then updateEsp(player, drawings); end end end)
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer -- Reference to your own player
+local Camera = workspace.CurrentCamera -- Reference to the camera
+
+local Boxes = {} -- Table to store the drawn boxes
+
+-- Function to calculate the bounding box of a character
+local function getBoundingBox(character)
+    local minPoint = Vector3.new(math.huge, math.huge, math.huge)
+    local maxPoint = Vector3.new(-math.huge, -math.huge, -math.huge)
+
+    for _, part in pairs(character:GetChildren()) do
+        if part:IsA("BasePart") then
+            local partSize = part.Size / 2
+            local corners = {
+                part.Position + Vector3.new(partSize.X, partSize.Y, partSize.Z),
+                part.Position + Vector3.new(partSize.X, partSize.Y, -partSize.Z),
+                part.Position + Vector3.new(partSize.X, -partSize.Y, partSize.Z),
+                part.Position + Vector3.new(partSize.X, -partSize.Y, -partSize.Z),
+                part.Position + Vector3.new(-partSize.X, partSize.Y, partSize.Z),
+                part.Position + Vector3.new(-partSize.X, partSize.Y, -partSize.Z),
+                part.Position + Vector3.new(-partSize.X, -partSize.Y, partSize.Z),
+                part.Position + Vector3.new(-partSize.X, -partSize.Y, -partSize.Z),
+            }
+
+            for _, corner in pairs(corners) do
+                minPoint = Vector3.new(
+                    math.min(minPoint.X, corner.X),
+                    math.min(minPoint.Y, corner.Y),
+                    math.min(minPoint.Z, corner.Z)
+                )
+                maxPoint = Vector3.new(
+                    math.max(maxPoint.X, corner.X),
+                    math.max(maxPoint.Y, corner.Y),
+                    math.max(maxPoint.Z, corner.Z)
+                )
+            end
+        end
+    end
+
+    return minPoint, maxPoint
+end
+
+-- Function to create or update a 2D box around a player
+local function updateBox(player)
+    if player == LocalPlayer then return end -- Skip your own player
+
+    local character = player.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then
+        return
+    end
+
+    local minPoint, maxPoint = getBoundingBox(character)
+
+    -- Project the 3D bounding box corners to 2D screen space
+    local topLeftScreen, topLeftVisible = Camera:WorldToViewportPoint(Vector3.new(minPoint.X, maxPoint.Y, minPoint.Z))
+    local bottomRightScreen, bottomRightVisible = Camera:WorldToViewportPoint(Vector3.new(maxPoint.X, minPoint.Y, maxPoint.Z))
+
+    -- Ensure the player is on-screen
+    if topLeftVisible or bottomRightVisible then
+        local box = Boxes[player]
+        if not box then
+            -- Create a new box if it doesn't exist
+            box = Drawing.new("Square")
+            box.Color = Color3.new(1, 0, 0) -- Red color
+            box.Thickness = 2
+            box.Filled = false -- Make the inside see-through
+            Boxes[player] = box
+        end
+
+        -- Calculate the size and position of the box
+        local boxSize = Vector2.new(
+            math.abs(bottomRightScreen.X - topLeftScreen.X),
+            math.abs(bottomRightScreen.Y - topLeftScreen.Y)
+        )
+        local boxPosition = Vector2.new(
+            math.min(topLeftScreen.X, bottomRightScreen.X),
+            math.min(topLeftScreen.Y, bottomRightScreen.Y)
+        )
+
+        box.Size = boxSize
+        box.Position = boxPosition
+        box.Visible = true
+    else
+        -- Hide the box if the player is off-screen
+        if Boxes[player] then
+            Boxes[player].Visible = false
+        end
+    end
+end
+
+-- Function to remove a box when a player leaves
+local function removeBox(player)
+    if Boxes[player] then
+        Boxes[player]:Remove()
+        Boxes[player] = nil
+    end
+end
+
+-- Update all player boxes every frame
+game:GetService("RunService").RenderStepped:Connect(function()
+    for _, player in pairs(Players:GetPlayers()) do
+        updateBox(player)
+    end
+end)
+
+-- Connect to player added/removed events
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        updateBox(player)
+    end)
+end)
+
+Players.PlayerRemoving:Connect(removeBox)
    -- The function that takes place when the toggle is pressed
    -- The variable (Value) is a boolean on whether the toggle is true or false
    end,
